@@ -371,7 +371,7 @@
     resultDiv.innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
 
     try {
-      const res = await fetch(`http://localhost:3000/alimento/${encodeURIComponent(alimento)}`);
+      const res = await fetch(`https://api-nutri-cam.vercel.app/alimento/${encodeURIComponent(alimento)}`);
       const data = await res.json();
 
       if (data.error) throw new Error(data.error);
