@@ -332,404 +332,100 @@
     </footer>
   </div>
 
-  <script>
-    const video = document.getElementById('video');
+ <script>
+  let modelo;
+  let video;
+
+  async function carregarModelo() {
+    modelo = await mobilenet.load();
+    iniciarCamera();
+  }
+
+  async function iniciarCamera() {
+    video = document.getElementById('video');
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+  }
+
+  async function analisar() {
     const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+    const contexto = canvas.getContext('2d');
+    contexto.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const imgTensor = tf.browser.fromPixels(canvas);
+    const predicoes = await modelo.classify(imgTensor);
+
+    if (!predicoes.length) {
+      alert('Não foi possível identificar o alimento.');
+      return;
+    }
+
+    const className = predicoes[0].className.split(',')[0].toLowerCase(); // ex: "banana"
+    console.log("Alimento detectado:", className);
+
+    buscarMacros(className);
+  }
+
+  async function buscarMacros(alimento) {
     const resultDiv = document.getElementById('result');
+    resultDiv.innerHTML = `<div class="loading"><div class="spinner"></div></div>`;
 
-    // Configurações da API FatSecret
-    const FATSECRET_API_KEY = '746215aee9b543a58e4cb11f7055ef72'; // Substitua pela sua chave
-    const FATSECRET_API_SECRET = '945ee4ac14d04e33b27a3fa313f4ad6c'; // Substitua pelo seu segredo
-    const FATSECRET_API_URL = 'https://platform.fatsecret.com/rest/server.api';
+    try {
+      const res = await fetch(`http://localhost:3000/alimento/${encodeURIComponent(alimento)}`);
+      const data = await res.json();
 
-    // Contadores de macros
-    let totalCalories = 0;
-    let totalProtein = 0;
-    let totalCarbs = 0;
-    let totalFat = 0;
-    
-    const dailyGoals = {
-      calories: 2000,
-      protein: 50,
-      carbs: 300,
-      fat: 70
-    };
+      if (data.error) throw new Error(data.error);
 
-    let model;
-
-    // Inicia câmera
-    async function initCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: 'environment'
-          } 
-        });
-        video.srcObject = stream;
-      } catch (err) {
-        resultDiv.innerHTML = `
-          <div class="error">
-            <i class="fas fa-exclamation-triangle"></i>
-            <p>Não foi possível acessar a câmera. Verifique as permissões.</p>
-          </div>
-        `;
-        console.error("Erro ao acessar câmera:", err);
-      }
-    }
-
-    // Carrega o modelo de IA
-    async function loadModel() {
-      try {
-        resultDiv.innerHTML = `
-          <div class="loading">
-            <div class="spinner"></div>
-          </div>
-          <p style="text-align: center;">Carregando modelo de IA...</p>
-        `;
-        
-        model = await mobilenet.load({ version: 2, alpha: 1.0 });
-        console.log("Modelo carregado");
-        
-        resultDiv.innerHTML = `
-          <div style="text-align: center; color: var(--gray);">
-            <i class="fas fa-check-circle" style="color: var(--primary); font-size: 40px; margin-bottom: 10px;"></i>
-            <p>Modelo carregado com sucesso! Aponte para um alimento e clique em "Analisar Alimento"</p>
-          </div>
-        `;
-      } catch (err) {
-        resultDiv.innerHTML = `
-          <div class="error">
-            <i class="fas fa-exclamation-triangle"></i>
-            <p>Falha ao carregar o modelo de IA. Recarregue a página.</p>
-          </div>
-        `;
-        console.error("Erro ao carregar modelo:", err);
-      }
-    }
-
-    // Verifica se é provavelmente um alimento
-    function isFood(label) {
-      const foodKeywords = [
-        'banana', 'apple', 'pizza', 'sandwich', 'orange', 'carrot', 'broccoli', 
-        'egg', 'cake', 'bread', 'food', 'spaghetti', 'meat', 'chicken', 'fish',
-        'rice', 'pasta', 'salad', 'cheese', 'yogurt', 'milk', 'coffee', 'tea',
-        'juice', 'soup', 'burger', 'fries', 'steak', 'pork', 'beef', 'tomato',
-        'potato', 'onion', 'pepper', 'cucumber', 'lettuce', 'avocado', 'grape',
-        'strawberry', 'melon', 'watermelon', 'pear', 'peach', 'plum', 'kiwi',
-        'pineapple', 'mango', 'blueberry', 'raspberry', 'blackberry', 'cherry',
-        'lemon', 'lime', 'coconut', 'fig', 'date', 'prune', 'raisin', 'almond',
-        'walnut', 'peanut', 'cashew', 'pistachio', 'hazelnut', 'pecan', 'bean',
-        'lentil', 'pea', 'corn', 'oat', 'wheat', 'barley', 'quinoa', 'soy',
-        'tofu', 'tempeh', 'seitan', 'sushi', 'noodle', 'ramen', 'dumpling',
-        'pancake', 'waffle', 'donut', 'cookie', 'biscuit', 'croissant', 'bagel',
-        'muffin', 'pie', 'tart', 'ice cream', 'chocolate', 'candy', 'popcorn'
-      ];
-      
-      return foodKeywords.some(word => label.toLowerCase().includes(word));
-    }
-
-    // Função para gerar a assinatura OAuth
-    function generateOAuthSignature(method, url, params, consumerSecret) {
-      const sortedParams = Object.keys(params)
-        .sort()
-        .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
-        .join('&');
-      
-      const baseString = `${method}&${encodeURIComponent(url)}&${encodeURIComponent(sortedParams)}`;
-      
-      const signingKey = `${encodeURIComponent(consumerSecret)}&`;
-      
-      const hash = CryptoJS.HmacSHA1(baseString, signingKey);
-      return CryptoJS.enc.Base64.stringify(hash);
-    }
-
-    // Buscar informações nutricionais na FatSecret
-    async function buscarInfoNutricional(nome) {
-      try {
-        resultDiv.innerHTML = `
-          <div class="loading">
-            <div class="spinner"></div>
-          </div>
-          <p style="text-align: center;">Buscando dados nutricionais para "${nome}"...</p>
-        `;
-
-        // Parâmetros da requisição
-        const params = {
-          method: 'foods.search',
-          search_expression: nome,
-          format: 'json',
-          oauth_consumer_key: FATSECRET_API_KEY,
-          oauth_nonce: Math.random().toString(36).substring(2),
-          oauth_signature_method: 'HMAC-SHA1',
-          oauth_timestamp: Math.floor(Date.now() / 1000),
-          oauth_version: '1.0'
-        };
-
-        // Gerar assinatura
-        params.oauth_signature = generateOAuthSignature(
-          'GET',
-          FATSECRET_API_URL,
-          params,
-          FATSECRET_API_SECRET
-        );
-
-        // Construir URL da requisição
-        const queryString = Object.keys(params)
-          .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
-          .join('&');
-        
-        const url = `${FATSECRET_API_URL}?${queryString}`;
-
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error('Erro na requisição à API FatSecret');
-        }
-
-        const data = await response.json();
-
-        // Processar os resultados
-        if (data.foods && data.foods.food && data.foods.food.length > 0) {
-          const foodItem = data.foods.food[0];
-          const foodId = foodItem.food_id;
-
-          // Agora buscar informações detalhadas do alimento
-          return await getFoodDetails(foodId);
-        } else {
-          return null;
-        }
-      } catch (error) {
-        console.error('Erro ao buscar informações nutricionais:', error);
-        return null;
-      }
-    }
-
-    // Buscar detalhes nutricionais específicos de um alimento
-    async function getFoodDetails(foodId) {
-      try {
-        // Parâmetros da requisição
-        const params = {
-          method: 'food.get',
-          food_id: foodId,
-          format: 'json',
-          oauth_consumer_key: FATSECRET_API_KEY,
-          oauth_nonce: Math.random().toString(36).substring(2),
-          oauth_signature_method: 'HMAC-SHA1',
-          oauth_timestamp: Math.floor(Date.now() / 1000),
-          oauth_version: '1.0'
-        };
-
-        // Gerar assinatura
-        params.oauth_signature = generateOAuthSignature(
-          'GET',
-          FATSECRET_API_URL,
-          params,
-          FATSECRET_API_SECRET
-        );
-
-        // Construir URL da requisição
-        const queryString = Object.keys(params)
-          .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
-          .join('&');
-        
-        const url = `${FATSECRET_API_URL}?${queryString}`;
-
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error('Erro na requisição à API FatSecret');
-        }
-
-        const data = await response.json();
-
-        // Extrair informações nutricionais
-        if (data.food) {
-          const food = data.food;
-          const servings = food.servings.serving;
-          const standardServing = Array.isArray(servings) ? servings[0] : servings;
-
-          return {
-            nome: food.food_name,
-            calorias: standardServing.calories || 'N/A',
-            carbo: standardServing.carbohydrate || 'N/A',
-            proteina: standardServing.protein || 'N/A',
-            gordura: standardServing.fat || 'N/A',
-            porcao: (standardServing.metric_serving_amount ? 
-                     standardServing.metric_serving_amount + standardServing.metric_serving_unit : 
-                     '100g')
-          };
-        } else {
-          return null;
-        }
-      } catch (error) {
-        console.error('Erro ao buscar detalhes do alimento:', error);
-        return null;
-      }
-    }
-
-    // Atualiza o contador de macros
-    function updateMacroCounters(calories, protein, carbs, fat) {
-      if (calories && !isNaN(calories)) {
-        totalCalories += parseFloat(calories);
-        document.getElementById('calories-consumed').textContent = `${Math.round(totalCalories)} kcal`;
-        const caloriesPercent = Math.min((totalCalories / dailyGoals.calories) * 100, 100);
-        document.getElementById('calories-progress').style.width = `${caloriesPercent}%`;
-      }
-      
-      if (protein && !isNaN(protein)) {
-        totalProtein += parseFloat(protein);
-        document.getElementById('protein-consumed').textContent = `${Math.round(totalProtein)}g`;
-        const proteinPercent = Math.min((totalProtein / dailyGoals.protein) * 100, 100);
-        document.getElementById('protein-progress').style.width = `${proteinPercent}%`;
-      }
-      
-      if (carbs && !isNaN(carbs)) {
-        totalCarbs += parseFloat(carbs);
-        document.getElementById('carbs-consumed').textContent = `${Math.round(totalCarbs)}g`;
-        const carbsPercent = Math.min((totalCarbs / dailyGoals.carbs) * 100, 100);
-        document.getElementById('carbs-progress').style.width = `${carbsPercent}%`;
-      }
-      
-      if (fat && !isNaN(fat)) {
-        totalFat += parseFloat(fat);
-        document.getElementById('fat-consumed').textContent = `${Math.round(totalFat)}g`;
-        const fatPercent = Math.min((totalFat / dailyGoals.fat) * 100, 100);
-        document.getElementById('fat-progress').style.width = `${fatPercent}%`;
-      }
-    }
-
-    // Captura e analisa a imagem
-    async function analisar() {
-      try {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const predictions = await model.classify(canvas);
-
-        if (!predictions || predictions.length === 0) {
-          resultDiv.innerHTML = `
-            <div class="error">
-              <i class="fas fa-exclamation-triangle"></i>
-              <p>Nenhum objeto detectado. Tente novamente.</p>
+      resultDiv.innerHTML = `
+        <div class="food-info">
+          <h2 class="food-name">${data.alimento}</h2>
+          <div class="nutrients">
+            <div class="nutrient-card calories">
+              <div class="icon"><i class="fas fa-fire"></i></div>
+              <div class="nutrient-value">${data.calorias || 0} kcal</div>
+              <div class="nutrient-label">Calorias</div>
             </div>
-          `;
-          return;
-        }
-
-        const top = predictions[0];
-        const label = top.className;
-        const prob = (top.probability * 100).toFixed(1);
-
-        if (!isFood(label)) {
-          resultDiv.innerHTML = `
-            <div class="error">
-              <i class="fas fa-exclamation-triangle"></i>
-              <p>Objeto detectado: <strong>${label}</strong> (${prob}%)</p>
-              <p>Isso não parece ser um alimento.</p>
+            <div class="nutrient-card protein">
+              <div class="icon"><i class="fas fa-drumstick-bite"></i></div>
+              <div class="nutrient-value">${data.proteinas || 0}g</div>
+              <div class="nutrient-label">Proteínas</div>
             </div>
-          `;
-          return;
-        }
-
-        const info = await buscarInfoNutricional(label);
-
-        if (!info) {
-          resultDiv.innerHTML = `
-            <div class="error">
-              <i class="fas fa-exclamation-triangle"></i>
-              <p>Alimento detectado: <strong>${label}</strong></p>
-              <p>Não foi possível encontrar dados nutricionais para este item.</p>
+            <div class="nutrient-card carbs">
+              <div class="icon"><i class="fas fa-bread-slice"></i></div>
+              <div class="nutrient-value">${data.carboidratos || 0}g</div>
+              <div class="nutrient-label">Carboidratos</div>
             </div>
-          `;
-          return;
-        }
-
-        resultDiv.innerHTML = `
-          <div class="food-info">
-            <h3 class="food-name">${info.nome}</h3>
-            <p style="text-align: center; color: var(--gray); margin-bottom: 20px;">
-              Porção: ${info.porcao || '100g'}
-            </p>
-            
-            <div class="nutrients">
-              <div class="nutrient-card calories">
-                <div class="icon"><i class="fas fa-fire"></i></div>
-                <div class="nutrient-value">${info.calorias}</div>
-                <div class="nutrient-label">Calorias (kcal)</div>
-              </div>
-              
-              <div class="nutrient-card protein">
-                <div class="icon"><i class="fas fa-dumbbell"></i></div>
-                <div class="nutrient-value">${info.proteina}</div>
-                <div class="nutrient-label">Proteínas (g)</div>
-              </div>
-              
-              <div class="nutrient-card carbs">
-                <div class="icon"><i class="fas fa-bread-slice"></i></div>
-                <div class="nutrient-value">${info.carbo}</div>
-                <div class="nutrient-label">Carboidratos (g)</div>
-              </div>
-              
-              <div class="nutrient-card fat">
-                <div class="icon"><i class="fas fa-bacon"></i></div>
-                <div class="nutrient-value">${info.gordura}</div>
-                <div class="nutrient-label">Gorduras (g)</div>
-              </div>
+            <div class="nutrient-card fat">
+              <div class="icon"><i class="fas fa-bacon"></i></div>
+              <div class="nutrient-value">${data.gorduras || 0}g</div>
+              <div class="nutrient-label">Gorduras</div>
             </div>
-            
-            <button onclick="addToDailyIntake(${info.calorias || 0}, ${info.proteina || 0}, ${info.carbo || 0}, ${info.gordura || 0})" class="btn" style="margin-top: 20px; width: 100%;">
-              <i class="fas fa-plus-circle"></i> Adicionar ao consumo diário
-            </button>
           </div>
-        `;
-      } catch (err) {
-        console.error("Erro na análise:", err);
-        resultDiv.innerHTML = `
-          <div class="error">
-            <i class="fas fa-exclamation-triangle"></i>
-            <p>Ocorreu um erro durante a análise. Tente novamente.</p>
-          </div>
-        `;
-      }
+        </div>
+      `;
+
+      atualizarProgresso(data);
+    } catch (err) {
+      resultDiv.innerHTML = `<div class="error">Erro ao buscar dados: ${err.message}</div>`;
     }
-    
-    // Adiciona os valores nutricionais ao contador diário
-    function addToDailyIntake(calories, protein, carbs, fat) {
-      updateMacroCounters(calories, protein, carbs, fat);
-      
-      // Mostra mensagem de confirmação
-      const foodInfo = document.querySelector('.food-info');
-      if (foodInfo) {
-        const confirmation = document.createElement('div');
-        confirmation.innerHTML = `
-          <div style="background-color: #E8F5E9; color: #2E7D32; padding: 10px; border-radius: 5px; margin-top: 15px; text-align: center;">
-            <i class="fas fa-check-circle"></i> Valores nutricionais adicionados ao seu consumo diário!
-          </div>
-        `;
-        foodInfo.appendChild(confirmation);
-        
-        // Remove o botão para evitar duplicação
-        const addButton = document.querySelector('.food-info .btn');
-        if (addButton) addButton.remove();
-      }
-    }
+  }
 
-    // Inicializa o app
-    window.onload = function() {
-      initCamera();
-      loadModel();
-    };
-  </script>
+  function atualizarProgresso({ calorias = 0, proteinas = 0, carboidratos = 0, gorduras = 0 }) {
+    const max = { calorias: 2000, proteinas: 50, carboidratos: 300, gorduras: 70 };
+
+    document.getElementById('calories-consumed').textContent = `${calorias} kcal`;
+    document.getElementById('protein-consumed').textContent = `${proteinas}g`;
+    document.getElementById('carbs-consumed').textContent = `${carboidratos}g`;
+    document.getElementById('fat-consumed').textContent = `${gorduras}g`;
+
+    document.getElementById('calories-progress').style.width = `${(calorias / max.calorias) * 100}%`;
+    document.getElementById('protein-progress').style.width = `${(proteinas / max.proteinas) * 100}%`;
+    document.getElementById('carbs-progress').style.width = `${(carboidratos / max.carboidratos) * 100}%`;
+    document.getElementById('fat-progress').style.width = `${(gorduras / max.gorduras) * 100}%`;
+  }
+
+  window.onload = carregarModelo;
+</script>
+
 </body>
 </html>
